@@ -2,7 +2,6 @@ import sys
 import pandas as pd
 import numpy as np
 from scipy.integrate import simps
-from scipy.interpolate import interp1d
 from scipy.spatial.distance import euclidean
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QFileDialog, QLabel
 
@@ -67,12 +66,6 @@ class SpectrumAnalyzer(QWidget):
                 blue_light_ratio = self.calculate_blue_light_ratio(wavelengths, normalized_intensities)
                 results[f'{column} 蓝光占比'] = blue_light_ratio
 
-                # 计算CIE XYZ颜色坐标
-                X, Y, Z = self.calculate_cie_xyz(wavelengths, normalized_intensities)
-                results[f'{column} CIE X'] = X
-                results[f'{column} CIE Y'] = Y
-                results[f'{column} CIE Z'] = Z
-
             # 计算归一化光谱之间的差异
             diff_info = self.calculate_differences(normalized_columns)
 
@@ -97,22 +90,6 @@ class SpectrumAnalyzer(QWidget):
         total_intensity = simps(intensities, wavelengths)
         blue_light_ratio = blue_light_intensity / total_intensity
         return blue_light_ratio
-
-    def calculate_cie_xyz(self, wavelengths, intensities):
-        cmf = pd.read_csv('cie1931.csv')  # 需要包含Wavelength, x, y, z列
-        interp_x = interp1d(cmf['Wavelength'], cmf['x'], kind='linear', bounds_error=False, fill_value=0)
-        interp_y = interp1d(cmf['Wavelength'], cmf['y'], kind='linear', bounds_error=False, fill_value=0)
-        interp_z = interp1d(cmf['Wavelength'], cmf['z'], kind='linear', bounds_error=False, fill_value=0)
-
-        x_bar = interp_x(wavelengths)
-        y_bar = interp_y(wavelengths)
-        z_bar = interp_z(wavelengths)
-
-        X = simps(intensities * x_bar, wavelengths)
-        Y = simps(intensities * y_bar, wavelengths)
-        Z = simps(intensities * z_bar, wavelengths)
-
-        return X, Y, Z
 
     def calculate_differences(self, normalized_columns):
         columns = list(normalized_columns.keys())
@@ -144,4 +121,3 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = SpectrumAnalyzer()
     sys.exit(app.exec_())
-
