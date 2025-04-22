@@ -16,6 +16,7 @@ import datetime
 import atexit
 import shutil
 import gzip
+from typing import List, Dict, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton, QFileDialog,
@@ -64,13 +65,23 @@ CONFIG_DEFAULTS = {
     "max_output_files": 100,  # 最大输出文件数量限制
 }
 
-def generate_color(index, total):
+def generate_color(index: int, total: int) -> str:
+    """
+    根据索引和总数生成颜色值。
+    
+    Args:
+        index: 当前索引
+        total: 总数
+    
+    Returns:
+        颜色值的十六进制表示
+    """
     hue = (index / max(total, 1)) % 1.0
     r, g, b = colorsys.hls_to_rgb(hue, 0.6, 0.5)
     return '#{:02x}{:02x}{:02x}'.format(int(r*255), int(g*255), int(b*255))
 
 class Keyword:
-    def __init__(self, raw, annotation, match_case=False, whole_word=False, use_regex=False, color="#ffff99"):
+    def __init__(self, raw: str, annotation: str, match_case: bool = False, whole_word: bool = False, use_regex: bool = False, color: str = "#ffff99"):
         self.raw = raw
         self.annotation = annotation
         self.match_case = match_case
@@ -78,7 +89,16 @@ class Keyword:
         self.use_regex = use_regex
         self.color = color
 
-    def to_group(self, idx):
+    def to_group(self, idx: int) -> Tuple[str, str]:
+        """
+        将关键词转换为正则表达式组。
+        
+        Args:
+            idx: 关键词索引
+        
+        Returns:
+            正则表达式模式和组名
+        """
         pat = self.raw if self.use_regex else RE_MODULE.escape(self.raw)
         if self.whole_word:
             pat = rf'(?<!\w){pat}(?!\w)'
@@ -87,7 +107,18 @@ class Keyword:
         name = f'k{idx}'
         return f'(?P<{name}>{pat})', name
 
-def highlight_line(raw_line, combined_re, mapping):
+def highlight_line(raw_line: str, combined_re: 're.Pattern', mapping: Dict[str, Dict[str, str]]) -> str:
+    """
+    高亮日志行中的关键词。
+    
+    Args:
+        raw_line: 原始日志行
+        combined_re: 组合的正则表达式
+        mapping: 关键词映射信息
+    
+    Returns:
+        高亮后的 HTML 字符串
+    """
     res, last = [], 0
     for m in combined_re.finditer(raw_line):
         s, e = m.span()
@@ -102,8 +133,16 @@ def highlight_line(raw_line, combined_re, mapping):
     res.append(html.escape(raw_line[last:]))
     return ''.join(res)
 
-def parse_timestamp(line):
-    """从日志行中解析时间戳，格式为 MM-DD HH:MM:SS.sss"""
+def parse_timestamp(line: str) -> datetime.datetime:
+    """
+    从日志行中解析时间戳，格式为 MM-DD HH:MM:SS.sss。
+    
+    Args:
+        line: 日志行
+    
+    Returns:
+        解析后的时间戳，如果无法解析则返回 datetime.datetime.min
+    """
     try:
         if len(line) >= 18:
             ts_str = line[:18]
@@ -121,7 +160,8 @@ class ScanWorker(QThread):
     warning = pyqtSignal(str)
     debug = pyqtSignal(str)  # 用于传递调试信息
 
-    def __init__(self, file_paths, combined_re, mapping, raw_list, out_path, max_workers, config_params, parent=None):
+    def __init__(self, file_paths: List[str], combined_re: 're.Pattern', mapping: Dict[str, Dict[str, str]], 
+                 raw_list: List[str], out_path: str, max_workers: int, config_params: Dict[str, int], parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.file_paths = file_paths
         self.combined_re = combined_re
@@ -141,7 +181,8 @@ class ScanWorker(QThread):
         self._executor = None
         self._temp_files_info = {}  # 存储临时文件路径和文件对象的字典
 
-    def stop(self):
+    def stop(self) -> None:
+        """停止扫描任务并清理资源。"""
         self._stop_requested = True
         if self._executor:
             self._executor.shutdown(wait=False, cancel_futures=True)
@@ -160,7 +201,8 @@ class ScanWorker(QThread):
                     logging.error(f"删除临时文件 {temp_file} 失败: {e}")
         self._temp_files_info.clear()
 
-    def run(self):
+    def run(self) -> None:
+        """执行扫描任务。"""
         try:
             total = len(self.file_paths)
             entry_count = 0
@@ -171,7 +213,7 @@ class ScanWorker(QThread):
             current_temp_out = None
             output_files = []
 
-            def scan_file(path):
+            def scan_file(path: str) -> Tuple[str, List[Tuple[str, str]]]:
                 out = []
                 fname = os.path.basename(path)
                 try:
@@ -211,10 +253,10 @@ class ScanWorker(QThread):
                     logging.error(f"扫描文件 {path} 时出错: {e}")
                 return fname, out
 
-            def dynamic_workers():
+            def dynamic_workers() -> int:
                 return min(self.max_workers * 2, len(self.file_paths), 32)
 
-            def get_temp_file_for_segment(start_time, end_time):
+            def get_temp_file_for_segment(start_time: datetime.datetime, end_time: datetime.datetime) -> Tuple[str, 'TextIO']:
                 """为每个时间段创建唯一的临时文件"""
                 start_str = start_time.strftime("%Y-%m-%d_%H-%M-%S")
                 end_str = end_time.strftime("%Y-%m-%d_%H-%M-%S")
@@ -224,7 +266,7 @@ class ScanWorker(QThread):
                 temp_out.write(CONFIG_DEFAULTS["html_style"]["header"] + f"<p>时间范围: {start_str} 至 {end_str}</p>\n")
                 return temp_file, temp_out
 
-            def close_temp_file(temp_file, temp_out, start_time, end_time):
+            def close_temp_file(temp_file: str, temp_out: 'TextIO', start_time: datetime.datetime, end_time: datetime.datetime) -> Optional[str]:
                 """关闭临时文件并生成最终 HTML 文件"""
                 if temp_out and not temp_out.closed:
                     try:
@@ -334,7 +376,17 @@ class ScanWorker(QThread):
             self._temp_files_info.clear()
             self.finished.emit(self.out_path)
 
-    def process_line(self, line, out):
+    def process_line(self, line: str, out: List[Tuple[str, str]]) -> bool:
+        """
+        处理单行日志。
+        
+        Args:
+            line: 日志行
+            out: 输出结果列表
+        
+        Returns:
+            是否停止处理
+        """
         if self._stop_requested:
             return True
         line = line.rstrip('\n')
@@ -347,6 +399,118 @@ class ScanWorker(QThread):
             hl = highlight_line(line, self.combined_re, self.mapping)
             out.append((ts, hl))
         return False
+
+# --- 新增 DecompressWorker 类用于异步解压 ---
+class DecompressWorker(QThread):
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(self, source_path: str, is_directory: bool = False, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.source_path = source_path
+        self.is_directory = is_directory
+        self.decompressed_files = []
+
+    def run(self) -> None:
+        """执行解压任务。"""
+        try:
+            temp_decompress_dir = os.path.join(tempfile.gettempdir(), "log_highlighter_decompress")
+            if not os.path.exists(temp_decompress_dir):
+                os.makedirs(temp_decompress_dir)
+
+            if self.is_directory:
+                self.progress.emit(f"扫描目录 {os.path.basename(self.source_path)} 中的压缩文件...")
+                if RARFILE_AVAILABLE:
+                    for root, _, files in os.walk(self.source_path):
+                        for f in files:
+                            if f.lower().endswith('.rar'):
+                                rar_path = os.path.join(root, f)
+                                base_name = os.path.splitext(f)[0]
+                                dest_dir = os.path.join(root, base_name)
+                                if not os.path.exists(dest_dir):
+                                    os.makedirs(dest_dir)
+                                self.progress.emit(f"解压 {f} 到 {dest_dir}...")
+                                if self.decompress_rar(rar_path, dest_dir):
+                                    gz_files = self.find_and_decompress_gz(dest_dir)
+                                    self.decompressed_files.extend(gz_files)
+                                    rar_files = self.recursive_decompress_rar(dest_dir)
+                                    self.decompressed_files.extend(rar_files)
+                else:
+                    self.progress.emit("rarfile 库不可用，跳过 .rar 文件解压")
+            else:
+                if self.source_path.lower().endswith('.rar') and RARFILE_AVAILABLE:
+                    base_name = os.path.splitext(os.path.basename(self.source_path))[0]
+                    dest_dir = os.path.join(temp_decompress_dir, base_name)
+                    if not os.path.exists(dest_dir):
+                        os.makedirs(dest_dir)
+                    self.progress.emit(f"解压 {os.path.basename(self.source_path)} 到 {dest_dir}...")
+                    if self.decompress_rar(self.source_path, dest_dir):
+                        gz_files = self.find_and_decompress_gz(dest_dir)
+                        self.decompressed_files.extend(gz_files)
+                        rar_files = self.recursive_decompress_rar(dest_dir)
+                        self.decompressed_files.extend(rar_files)
+                else:
+                    self.progress.emit("rarfile 库不可用或文件不是 .rar 格式，跳过解压")
+            self.finished.emit(self.decompressed_files)
+        except Exception as e:
+            self.error.emit(f"解压过程中出错: {str(e)}")
+
+    def decompress_rar(self, rar_path: str, dest_dir: str) -> bool:
+        """解压 .rar 文件到指定目录"""
+        if not RARFILE_AVAILABLE:
+            return False
+        try:
+            with rarfile.RarFile(rar_path) as rf:
+                rf.extractall(dest_dir)
+            logging.info(f"成功解压 {rar_path} 到 {dest_dir}")
+            return True
+        except Exception as e:
+            logging.error(f"解压 {rar_path} 失败: {e}")
+            return False
+
+    def decompress_gz(self, gz_path: str, dest_path: str) -> bool:
+        """解压 .gz 文件到指定路径"""
+        try:
+            with gzip.open(gz_path, 'rb') as f_in:
+                with open(dest_path, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            logging.info(f"成功解压 {gz_path} 到 {dest_path}")
+            return True
+        except Exception as e:
+            logging.error(f"解压 {gz_path} 失败: {e}")
+            return False
+
+    def find_and_decompress_gz(self, directory: str) -> List[str]:
+        """递归查找并解压目录中的所有 .gz 文件"""
+        decompressed_paths = []
+        for root, _, files in os.walk(directory):
+            for f in files:
+                if f.endswith('.gz'):
+                    gz_path = os.path.join(root, f)
+                    dest_path = os.path.splitext(gz_path)[0]
+                    self.progress.emit(f"解压 {f} 到 {dest_path}...")
+                    if self.decompress_gz(gz_path, dest_path):
+                        decompressed_paths.append(dest_path)
+        return decompressed_paths
+
+    def recursive_decompress_rar(self, root_dir: str) -> List[str]:
+        """递归解压 root_dir 中所有 .rar 并处理内部 .gz"""
+        decompressed = []
+        for curdir, _, files in os.walk(root_dir):
+            for f in files:
+                if f.lower().endswith('.rar'):
+                    rar_path = os.path.join(curdir, f)
+                    dest = os.path.join(curdir, os.path.splitext(f)[0])
+                    os.makedirs(dest, exist_ok=True)
+                    self.progress.emit(f"递归解压 {f} 到 {dest}...")
+                    if self.decompress_rar(rar_path, dest):
+                        gz_files = self.find_and_decompress_gz(dest)
+                        decompressed.extend(gz_files)
+                        sub_rar_files = self.recursive_decompress_rar(dest)
+                        decompressed.extend(sub_rar_files)
+        return decompressed
+# --- DecompressWorker 类结束 ---
 
 class LogHighlighter(QMainWindow):
     def __init__(self):
@@ -377,11 +541,12 @@ class LogHighlighter(QMainWindow):
         # 注册退出时清理临时文件
         atexit.register(self.cleanup_temp_files)
 
-    def signal_handler(self, signum, frame):
+    def signal_handler(self, signum: int, frame: object) -> None:
+        """处理系统信号以优雅退出。"""
         logging.info(f"收到系统信号 {signum}，正在关闭程序")
         self.close()
 
-    def cleanup_temp_files(self):
+    def cleanup_temp_files(self) -> None:
         """清理所有临时文件"""
         temp_dir = tempfile.gettempdir()
         for f in os.listdir(temp_dir):
@@ -392,7 +557,8 @@ class LogHighlighter(QMainWindow):
                 except Exception as e:
                     logging.error(f"清理临时文件 {f} 失败: {e}")
 
-    def init_ui(self):
+    def init_ui(self) -> None:
+        """初始化用户界面。"""
         mainSplitter = QSplitter(Qt.Vertical)
         self.setCentralWidget(mainSplitter)
         topSplitter = QSplitter(Qt.Horizontal)
@@ -595,11 +761,13 @@ class LogHighlighter(QMainWindow):
         mainSplitter.setStretchFactor(0, 3)
         mainSplitter.setStretchFactor(1, 1)
 
-    def update_config_param(self, key, value):
+    def update_config_param(self, key: str, value: int) -> None:
+        """更新配置参数并保存设置。"""
         self.config_params[key] = value
         self.save_settings()
 
-    def select_config(self):
+    def select_config(self) -> None:
+        """选择 TOML 配置文件。"""
         cfg, _ = QFileDialog.getOpenFileName(self, "选择配置文件", "", "TOML (*.toml)")
         if cfg:
             try:
@@ -611,36 +779,39 @@ class LogHighlighter(QMainWindow):
             except Exception as e:
                 logging.error(f"加载配置文件失败: {e}")
                 QMessageBox.critical(self, "配置文件错误", f"加载配置文件失败: {str(e)}")
-    def update_group_checkboxes(self) -> None:
-    """
-    根据加载的 TOML 配置文件更新关键词分组的复选框。
-    清除现有的分组复选框，并根据配置文件中的分组重新创建复选框，仅显示组名（去除 'group.' 前缀）。
-    """
-    # 清除现有的分组复选框
-    for i in reversed(range(self.group_layout.count())):
-        widget = self.group_layout.itemAt(i).widget()
-        if widget:
-            self.group_layout.removeWidget(widget)
-            widget.deleteLater()
 
-    # 如果有配置文件，加载分组信息
-    if self.config_path and os.path.isfile(self.config_path):
-        try:
-            config = toml.load(self.config_path)
-            total_groups = len(config)
-            for idx, (group_name, _) in enumerate(config.items()):
-                color = generate_color(idx, total_groups)
-                self.group_colors[group_name] = color
-                # 去除 'group.' 前缀，仅显示组名
-                display_name = group_name.replace("group.", "")
-                cb = QCheckBox(display_name)
-                cb.setProperty("group_name", group_name)  # 保留原始名称以便后续逻辑使用
-                self.group_layout.addWidget(cb)
-        except Exception as e:
-            logging.error(f"更新分组复选框失败: {e}")
-            QMessageBox.critical(self, "分组错误", f"更新分组复选框失败: {str(e)}")
-    
-    def shorten_filename(self, filename, max_length=200):
+    # --- 新增 update_group_checkboxes 方法 ---
+    def update_group_checkboxes(self) -> None:
+        """
+        根据加载的 TOML 配置文件更新关键词分组的复选框。
+        清除现有的分组复选框，并根据配置文件中的分组重新创建复选框，仅显示组名（去除 'group.' 前缀）。
+        """
+        # 清除现有的分组复选框
+        for i in reversed(range(self.group_layout.count())):
+            widget = self.group_layout.itemAt(i).widget()
+            if widget:
+                self.group_layout.removeWidget(widget)
+                widget.deleteLater()
+
+        # 如果有配置文件，加载分组信息
+        if self.config_path and os.path.isfile(self.config_path):
+            try:
+                config = toml.load(self.config_path)
+                total_groups = len(config)
+                for idx, (group_name, _) in enumerate(config.items()):
+                    color = generate_color(idx, total_groups)
+                    self.group_colors[group_name] = color
+                    # 去除 'group.' 前缀，仅显示组名
+                    display_name = group_name.replace("group.", "")
+                    cb = QCheckBox(display_name)
+                    cb.setProperty("group_name", group_name)  # 保留原始名称以便后续逻辑使用
+                    self.group_layout.addWidget(cb)
+            except Exception as e:
+                logging.error(f"更新分组复选框失败: {e}")
+                QMessageBox.critical(self, "分组错误", f"更新分组复选框失败: {str(e)}")
+    # --- update_group_checkboxes 方法结束 ---
+
+    def shorten_filename(self, filename: str, max_length: int = 200) -> str:
         """缩短文件名以避免路径过长问题"""
         base, ext = os.path.splitext(filename)
         if len(filename) > max_length:
@@ -648,119 +819,75 @@ class LogHighlighter(QMainWindow):
             return base + ext
         return filename
 
-    def decompress_rar(self, rar_path, dest_dir):
-        """解压 .rar 文件到指定目录"""
-        if not RARFILE_AVAILABLE:
-            logging.error("rarfile 库不可用，无法解压 .rar 文件")
-            self.debug.append("rarfile 库不可用，无法解压 .rar 文件")
-            return False
-        try:
-            with rarfile.RarFile(rar_path) as rf:
-                rf.extractall(dest_dir)
-            logging.info(f"成功解压 {rar_path} 到 {dest_dir}")
-            self.debug.append(f"成功解压 {os.path.basename(rar_path)} 到 {dest_dir}")
-            return True
-        except Exception as e:
-            logging.error(f"解压 {rar_path} 失败: {e}")
-            self.debug.append(f"解压 {os.path.basename(rar_path)} 失败: {str(e)}")
-            return False
-
-    def decompress_gz(self, gz_path, dest_path):
-        """解压 .gz 文件到指定路径"""
-        try:
-            with gzip.open(gz_path, 'rb') as f_in:
-                with open(dest_path, 'wb') as f_out:
-                    shutil.copyfileobj(f_in, f_out)
-            logging.info(f"成功解压 {gz_path} 到 {dest_path}")
-            self.debug.append(f"成功解压 {os.path.basename(gz_path)} 到 {dest_path}")
-            return True
-        except Exception as e:
-            logging.error(f"解压 {gz_path} 失败: {e}")
-            self.debug.append(f"解压 {os.path.basename(gz_path)} 失败: {str(e)}")
-            return False
-
-    def find_and_decompress_gz(self, directory):
-        """递归查找并解压目录中的所有 .gz 文件"""
-        decompressed_paths = []
-        for root, _, files in os.walk(directory):
-            for f in files:
-                if f.endswith('.gz'):
-                    gz_path = os.path.join(root, f)
-                    dest_path = os.path.splitext(gz_path)[0]  # 去掉 .gz 后缀
-                    if self.decompress_gz(gz_path, dest_path):
-                        decompressed_paths.append(dest_path)
-        return decompressed_paths
-
-    def add_directory(self):
+    # --- 修改 add_directory 方法以支持异步解压 ---
+    def add_directory(self) -> None:
+        """添加日志目录并异步处理压缩文件解压"""
         d = QFileDialog.getExistingDirectory(self, "添加日志目录")
         if d and d not in self.history["sources"]:
             self.history["sources"].insert(0, d)
             self.src_list.insertItem(0, d)
             self.save_settings()
-            # 扫描首层 .rar 文件并解压
-            if RARFILE_AVAILABLE:
-                try:
-                    for f in os.listdir(d):
-                        if f.endswith('.rar'):
-                            rar_path = os.path.join(d, f)
-                            # 创建同名文件夹，处理长文件名
-                            base_name = os.path.splitext(f)[0]
-                            dest_dir = os.path.join(d, self.shorten_filename(base_name))
-                            if not os.path.exists(dest_dir):
-                                os.makedirs(dest_dir)
-                            if self.decompress_rar(rar_path, dest_dir):
-                                # 查找并解压 .gz 文件
-                                gz_files = self.find_and_decompress_gz(dest_dir)
-                                self.decompressed_files.extend(gz_files)
-                except Exception as e:
-                    logging.error(f"扫描目录 {d} 中的 .rar 文件失败: {e}")
-                    self.debug.append(f"扫描目录 {d} 中的 .rar 文件失败: {str(e)}")
-            else:
-                self.debug.append("rarfile 库不可用，跳过 .rar 文件解压")
+            # 异步处理目录中的压缩文件
+            self.debug.append(f"添加目录: {d}")
+            worker = DecompressWorker(d, is_directory=True, parent=self)
+            worker.progress.connect(lambda msg: self.debug.append(msg))
+            worker.finished.connect(lambda files: (
+                self.decompressed_files.extend(files),
+                self.debug.append(f"目录 {os.path.basename(d)} 解压完成，新增 {len(files)} 个文件")
+            ))
+            worker.error.connect(lambda msg: (
+                self.debug.append(msg),
+                QMessageBox.critical(self, "解压错误", msg)
+            ))
+            worker.start()
+    # --- add_directory 方法结束 ---
 
-    def add_file(self):
+    def add_file(self) -> None:
+        """添加单个日志文件。"""
         f, _ = QFileDialog.getOpenFileName(self, "添加日志文件", "", "所有文件 (*)")
         if f and f not in self.history["sources"]:
             self.history["sources"].insert(0, f)
             self.src_list.insertItem(0, f)
             self.save_settings()
 
-    def add_archive(self):
+    # --- 修改 add_archive 方法以支持异步解压 ---
+    def add_archive(self) -> None:
+        """添加压缩包并异步处理解压"""
         f, _ = QFileDialog.getOpenFileName(self, "添加压缩包", "", "RAR 文件 (*.rar)")
         if f and f not in self.history["sources"]:
             self.history["sources"].insert(0, f)
             self.src_list.insertItem(0, f)
             self.save_settings()
+            # 异步处理压缩包解压
+            self.debug.append(f"添加压缩包: {f}")
+            worker = DecompressWorker(f, is_directory=False, parent=self)
+            worker.progress.connect(lambda msg: self.debug.append(msg))
+            worker.finished.connect(lambda files: (
+                self.decompressed_files.extend(files),
+                self.debug.append(f"压缩包 {os.path.basename(f)} 解压完成，新增 {len(files)} 个文件")
+            ))
+            worker.error.connect(lambda msg: (
+                self.debug.append(msg),
+                QMessageBox.critical(self, "解压错误", msg)
+            ))
+            worker.start()
+    # --- add_archive 方法结束 ---
 
-    def remove_sources(self):
+    def remove_sources(self) -> None:
+        """移除选中的日志源。"""
         for it in self.src_list.selectedItems():
             p = it.text()
             self.history["sources"].remove(p)
             self.src_list.takeItem(self.src_list.row(it))
         self.save_settings()
 
-    def clear_history(self):
+    def clear_history(self) -> None:
+        """清除历史记录。"""
         self.history["sources"].clear()
         self.src_list.clear()
         self.save_settings()
 
-    def recursive_decompress_rar(self, root_dir):
-        """递归解压 root_dir 中所有 .rar 并处理内部 .gz"""
-        decompressed = []
-        for curdir, _, files in os.walk(root_dir):
-            for f in files:
-                if f.lower().endswith('.rar'):
-                    rar_path = os.path.join(curdir, f)
-                    dest = os.path.join(curdir, self.shorten_filename(os.path.splitext(f)[0]))
-                    os.makedirs(dest, exist_ok=True)
-                    if self.decompress_rar(rar_path, dest):
-                        gz_files = self.find_and_decompress_gz(dest)
-                        decompressed.extend(gz_files)
-                        sub_rar_files = self.recursive_decompress_rar(dest)
-                        decompressed.extend(sub_rar_files)
-        return decompressed
-
-    def get_log_files(self):
+    def get_log_files(self) -> List[str]:
         """获取所有日志文件路径，包括处理压缩文件"""
         paths = []
         self.decompressed_files = []  # 清空之前的解压文件列表
@@ -822,7 +949,67 @@ class LogHighlighter(QMainWindow):
         paths.sort()
         return paths
 
-    def analyze_combined_keywords(self):
+    def decompress_rar(self, rar_path: str, dest_dir: str) -> bool:
+        """解压 .rar 文件到指定目录"""
+        if not RARFILE_AVAILABLE:
+            logging.error("rarfile 库不可用，无法解压 .rar 文件")
+            self.debug.append("rarfile 库不可用，无法解压 .rar 文件")
+            return False
+        try:
+            with rarfile.RarFile(rar_path) as rf:
+                rf.extractall(dest_dir)
+            logging.info(f"成功解压 {rar_path} 到 {dest_dir}")
+            self.debug.append(f"成功解压 {os.path.basename(rar_path)} 到 {dest_dir}")
+            return True
+        except Exception as e:
+            logging.error(f"解压 {rar_path} 失败: {e}")
+            self.debug.append(f"解压 {os.path.basename(rar_path)} 失败: {str(e)}")
+            return False
+
+    def decompress_gz(self, gz_path: str, dest_path: str) -> bool:
+        """解压 .gz 文件到指定路径"""
+        try:
+            with gzip.open(gz_path, 'rb') as f_in:
+                with open(dest_path, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            logging.info(f"成功解压 {gz_path} 到 {dest_path}")
+            self.debug.append(f"成功解压 {os.path.basename(gz_path)} 到 {dest_path}")
+            return True
+        except Exception as e:
+            logging.error(f"解压 {gz_path} 失败: {e}")
+            self.debug.append(f"解压 {os.path.basename(gz_path)} 失败: {str(e)}")
+            return False
+
+    def find_and_decompress_gz(self, directory: str) -> List[str]:
+        """递归查找并解压目录中的所有 .gz 文件"""
+        decompressed_paths = []
+        for root, _, files in os.walk(directory):
+            for f in files:
+                if f.endswith('.gz'):
+                    gz_path = os.path.join(root, f)
+                    dest_path = os.path.splitext(gz_path)[0]  # 去掉 .gz 后缀
+                    if self.decompress_gz(gz_path, dest_path):
+                        decompressed_paths.append(dest_path)
+        return decompressed_paths
+
+    def recursive_decompress_rar(self, root_dir: str) -> List[str]:
+        """递归解压 root_dir 中所有 .rar 并处理内部 .gz"""
+        decompressed = []
+        for curdir, _, files in os.walk(root_dir):
+            for f in files:
+                if f.lower().endswith('.rar'):
+                    rar_path = os.path.join(curdir, f)
+                    dest = os.path.join(curdir, self.shorten_filename(os.path.splitext(f)[0]))
+                    os.makedirs(dest, exist_ok=True)
+                    if self.decompress_rar(rar_path, dest):
+                        gz_files = self.find_and_decompress_gz(dest)
+                        decompressed.extend(gz_files)
+                        sub_rar_files = self.recursive_decompress_rar(dest)
+                        decompressed.extend(sub_rar_files)
+        return decompressed
+
+    def analyze_combined_keywords(self) -> None:
+        """开始分析日志文件中的关键词。"""
         if not self.config_path or not os.path.isfile(self.config_path):
             QMessageBox.warning(self, "提示", "请选择有效配置文件")
             return
@@ -889,7 +1076,7 @@ class LogHighlighter(QMainWindow):
         ))
         self.worker.debug.connect(lambda msg: self.debug.append(msg))
 
-        def on_finished(path):
+        def on_finished(path: str) -> None:
             self.btn_analysis.setEnabled(True)
             self.btn_cancel.setVisible(False)
             self.progress.setVisible(False)
@@ -902,7 +1089,8 @@ class LogHighlighter(QMainWindow):
         self.worker.finished.connect(on_finished)
         self.worker.start()
 
-    def cancel_analysis(self):
+    def cancel_analysis(self) -> None:
+        """取消正在进行的分析任务。"""
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker.quit()  # 确保线程退出
@@ -918,7 +1106,8 @@ class LogHighlighter(QMainWindow):
                 self.worker.deleteLater()
                 self.worker = None
 
-    def closeEvent(self, event):
+    def closeEvent(self, event: 'QCloseEvent') -> None:
+        """处理窗口关闭事件。"""
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker.quit()
@@ -930,7 +1119,7 @@ class LogHighlighter(QMainWindow):
         QCoreApplication.quit()
         event.accept()
 
-    def add_custom_keyword(self):
+    def add_custom_keyword(self) -> None:
         """添加自定义关键词"""
         txt = self.keyword_combo.currentText().strip()
         if not txt:
@@ -954,7 +1143,7 @@ class LogHighlighter(QMainWindow):
             self.custom_keyword_checks.append(cb)
             self.custom_layout.addWidget(cb)
 
-    def clear_selected_custom_keywords(self):
+    def clear_selected_custom_keywords(self) -> None:
         """清除选中的自定义关键词"""
         for i in reversed(range(len(self.custom_keyword_checks))):
             cb = self.custom_keyword_checks[i]
@@ -963,12 +1152,12 @@ class LogHighlighter(QMainWindow):
                 cb.deleteLater()
                 self.custom_keyword_checks.pop(i)
 
-    def select_all_custom_keywords(self):
+    def select_all_custom_keywords(self) -> None:
         """选择所有自定义关键词"""
         for cb in self.custom_keyword_checks:
             cb.setChecked(True)
 
-    def load_settings(self):
+    def load_settings(self) -> None:
         """加载设置"""
         if os.path.exists(self.settings_path):
             try:
@@ -1004,7 +1193,7 @@ class LogHighlighter(QMainWindow):
                 logging.error(f"加载设置失败: {e}")
                 QMessageBox.critical(self, "设置错误", f"加载设置失败: {str(e)}")
 
-    def save_settings(self):
+    def save_settings(self) -> None:
         """保存设置"""
         self.history["cores"] = self.spin_cores.value()
         self.history["max_results"] = self.config_params["max_results"]
