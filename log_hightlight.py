@@ -611,7 +611,34 @@ class LogHighlighter(QMainWindow):
             except Exception as e:
                 logging.error(f"加载配置文件失败: {e}")
                 QMessageBox.critical(self, "配置文件错误", f"加载配置文件失败: {str(e)}")
+    def update_group_checkboxes(self) -> None:
+    """
+    根据加载的 TOML 配置文件更新关键词分组的复选框。
+    清除现有的分组复选框，并根据配置文件中的分组重新创建复选框。
+    """
+    # 清除现有的分组复选框
+    for i in reversed(range(self.group_layout.count())):
+        widget = self.group_layout.itemAt(i).widget()
+        if widget:
+            self.group_layout.removeWidget(widget)
+            widget.deleteLater()
 
+    # 如果有配置文件，加载分组信息
+    if self.config_path and os.path.isfile(self.config_path):
+        try:
+            config = toml.load(self.config_path)
+            total_groups = len(config)
+            for idx, (group_name, group_data) in enumerate(config.items()):
+                color = generate_color(idx, total_groups)
+                self.group_colors[group_name] = color
+                display_text = f"{group_name} ({len(group_data) - sum(1 for k in group_data if k in ('match_case', 'whole_word', 'use_regex'))} 关键词)"
+                cb = QCheckBox(display_text)
+                cb.setProperty("group_name", group_name)
+                self.group_layout.addWidget(cb)
+        except Exception as e:
+            logging.error(f"更新分组复选框失败: {e}")
+            QMessageBox.critical(self, "分组错误", f"更新分组复选框失败: {str(e)}")
+    
     def shorten_filename(self, filename, max_length=200):
         """缩短文件名以避免路径过长问题"""
         base, ext = os.path.splitext(filename)
