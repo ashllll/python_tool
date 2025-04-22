@@ -614,7 +614,7 @@ class LogHighlighter(QMainWindow):
     def update_group_checkboxes(self) -> None:
     """
     根据加载的 TOML 配置文件更新关键词分组的复选框。
-    清除现有的分组复选框，并根据配置文件中的分组重新创建复选框。
+    清除现有的分组复选框，并根据配置文件中的分组重新创建复选框，仅显示组名（去除 'group.' 前缀）。
     """
     # 清除现有的分组复选框
     for i in reversed(range(self.group_layout.count())):
@@ -628,12 +628,13 @@ class LogHighlighter(QMainWindow):
         try:
             config = toml.load(self.config_path)
             total_groups = len(config)
-            for idx, (group_name, group_data) in enumerate(config.items()):
+            for idx, (group_name, _) in enumerate(config.items()):
                 color = generate_color(idx, total_groups)
                 self.group_colors[group_name] = color
-                display_text = f"{group_name} ({len(group_data) - sum(1 for k in group_data if k in ('match_case', 'whole_word', 'use_regex'))} 关键词)"
-                cb = QCheckBox(display_text)
-                cb.setProperty("group_name", group_name)
+                # 去除 'group.' 前缀，仅显示组名
+                display_name = group_name.replace("group.", "")
+                cb = QCheckBox(display_name)
+                cb.setProperty("group_name", group_name)  # 保留原始名称以便后续逻辑使用
                 self.group_layout.addWidget(cb)
         except Exception as e:
             logging.error(f"更新分组复选框失败: {e}")
