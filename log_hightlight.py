@@ -1066,35 +1066,55 @@ class LogHighlighter(QMainWindow):
             QMessageBox.warning(self, "提示", "无日志文件可分析")
             return
 
-        kws = [cb.property("keyword_obj") for cb in self.custom_keyword_checks
-               if cb.property("keyword_obj") and cb.isChecked()]
+        custom_kws = []
+        for cb in self.custom_keyword_checks:
+            if cb.property("keyword_obj") and cb.isChecked():
+                custom_kws.append(cb.property("keyword_obj"))
+
+        # 2. 收集分组关键词
+        group_kws = []
         for i in range(self.group_layout.count()):
             cb = self.group_layout.itemAt(i).widget()
             if isinstance(cb, QCheckBox) and cb.isChecked():
+                # toml 中分组格式示例： config[group.name][key] = { key="xxx", annotation="yyy", ... }
                 grp = toml.load(self.config_path).get(cb.property("group_name"), {})
-                mc, ww, uz = grp.get("match_case", False), grp.get("whole_word", False), grp.get("use_regex", False)
+                mc = grp.get("match_case", False)
+                ww = grp.get("whole_word", False)
+                uz = grp.get("use_regex", False)
                 color = self.group_colors.get(cb.property("group_name"), "#ffff99")
                 for k, v in grp.items():
-                    if k in ("match_case", "whole_word", "use_regex"):
-                        continue
                     if isinstance(v, dict) and "key" in v:
-                        kws.append(Keyword(v["key"], v.get("annotation", ""), mc, ww, uz, color))
-        if not kws:
-            QMessageBox.warning(self, "提示", "请勾选至少一个关键词")
+                        group_kws.append(
+                            Keyword(v["key"], v.get("annotation", ""),
+                                    mc, ww, uz, color)
+                        )
+
+        # 3. 合并去重
+        all_kws = custom_kws + group_kws
+        # 如果没有任何关键词，就提示并返回
+        if not all_kws:
+            QMessageBox.warning(self, "提示", "请勾选至少一个自定义关键词或分组关键词")
             return
 
+        # 4. 构建正则表达式
         parts, mapping, raw_list = [], {}, []
-        for idx, kw in enumerate(kws):
+        for idx, kw in enumerate(all_kws):
             gp, name = kw.to_group(idx)
             parts.append(gp)
             mapping[name] = {"annotation": kw.annotation, "color": kw.color}
             raw_list.append(kw.raw)
-        combined_re = RE_MODULE.compile("|".join(parts))
 
+        try:
+            combined_re = RE_MODULE.compile("|".join(parts))
+        except Exception as e:
+            QMessageBox.critical(self, "正则错误", f"正则表达式编译失败：{e}")
+            return
+        # === 修改点 END ===
+
+        # （下面的逻辑无需改动，直接使用 new combined_re / mapping / raw_list）
         if self.worker and self.worker.isRunning():
             self.cancel_analysis()
 
-        self.debug.clear()
         self.btn_analysis.setEnabled(False)
         self.btn_cancel.setVisible(True)
         self.progress.setVisible(True)
