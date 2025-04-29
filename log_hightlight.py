@@ -1303,3 +1303,4 @@ if __name__ == "__main__":
     win = LogHighlighter()
     win.show()
     sys.exit(app.exec_())
+重新分析这段代码，并按照方案优化，保留原有功能
